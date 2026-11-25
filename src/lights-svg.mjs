@@ -7,9 +7,10 @@
 // Drawing notes:
 // - 53 weeks x 7 days on a fixed 16 x 19 px pitch, so it still reads as a contribution graph.
 // - One serpentine wire, hooks at month boundaries, a C9-style bulb per day. Level 0 = unlit glass.
-// - Motion is glow-only: a one-time left-to-right "plug-in" sweep (1.2s) plus a slow opacity twinkle on at most
-//   120 halos (4.2s period or slower). Bulb bodies never change, so with CSS stripped the image is the finished
-//   picture. `prefers-reduced-motion: reduce` stops everything; `motion: false` drops the <style> block entirely.
+// - Motion: a one-time left-to-right "plug-in" sweep of the glow (1.2s), then every lit bulb twinkles: the glass dips
+//   to 45% opacity and its halo to 10%, on 2.4-4.2s cycles with staggered phases so neighbours sparkle out of step.
+//   Opacity only, at most 0.42 Hz per bulb. With CSS stripped the image is the finished, full-bright picture.
+//   `prefers-reduced-motion: reduce` stops everything; `motion: false` drops the <style> block entirely.
 // - All text uses a system font stack or outlined paths, because an SVG inside <img> can't load fonts.
 
 /**
@@ -37,10 +38,10 @@
  * @property {string}  [seed]          Twinkle-subset seed (default: user + last date).
  * @property {number}  [from]          First week to draw (slice).
  * @property {number}  [to]            Week to stop before (slice).
- * @property {number}  [maxTwinkle=120] Upper bound on twinkling halos.
+ * @property {number}  [maxTwinkle]     Upper bound on twinkling bulbs (default: every lit bulb).
  */
 
-export const BUILDER_VERSION = 1;
+export const BUILDER_VERSION = 2;
 /** @type {readonly Theme[]} */
 export const THEMES = ["night", "light", "dark"];
 /** @type {readonly Style[]} */
@@ -178,38 +179,45 @@ export function buildLightsSvg(cal, o = {}) {
   }));
   // bulbs + halos. Halos are grouped per month segment so the plug-in sweep animates a <g> (cheap, few rules).
   const segHalos = hooks.slice(0, -1).map(() => "");
-  const haloList = [];
-  let bulbs = "";
+  const litList = [];
   for (let c = 0; c < weeks; c++) for (let r = 0; r < 7; r++) {
     const i = (w0 + c) * 7 + r;
     // future days of the current week, and padding days before a partial first week ("."): wire only, no bulb
     if (i >= nDays || cal.levels[i] === ".") continue;
     const x = xOf(c), y = (Y0 + r * PY + sagAt(x)).toFixed(1), h = (c + 2 * r) % pal.length, l = o.unlit ? 0 : lv(cal.levels, i);
-    if (l >= 2) haloList.push({ c, r, x, y, h, l });
-    bulbs += `<use href="#b${h}${l}" x="${x}" y="${y}"/>`;
+    litList.push({ c, r, x, y, h, l });
   }
-  // deterministic twinkle subset: at most maxTwinkle halos, chosen by hash(seed, position)
-  const maxTw = o.maxTwinkle ?? 120;
+  // deterministic twinkle subset over lit bulbs (level >= 1): at most maxTwinkle (default: all), chosen by hash(seed, position).
+  // A twinkling bulb and its halo share one phase class t0-t8, so the glow dips with the glass.
+  const lit = litList.flatMap((b, k) => (b.l >= 1 ? [k] : []));
+  const maxTw = o.maxTwinkle ?? lit.length;
   const seed = fnv(o.seed ?? `${o.user ?? ""}|${addDays(cal.start, Math.max(0, nDays - 1))}`);
   let twinkle = null;
-  if (motion && haloList.length > maxTw) {
-    const order = haloList.map((_, k) => k).sort((a, b) => mix(seed ^ (haloList[a].c * 7 + haloList[a].r)) - mix(seed ^ (haloList[b].c * 7 + haloList[b].r)) || a - b);
-    twinkle = new Set(order.slice(0, maxTw));
+  if (motion) {
+    if (lit.length > maxTw) {
+      const key = (k) => mix(seed ^ (litList[k].c * 7 + litList[k].r));
+      twinkle = new Set([...lit].sort((a, b) => key(a) - key(b) || a - b).slice(0, Math.max(0, maxTw)));
+    } else twinkle = new Set(lit);
   }
-  haloList.forEach((hl, k) => {
-    const tw = motion && (!twinkle || twinkle.has(k));
-    const cls = tw ? ` class="t${mix(hl.c * 7 + hl.r) % 9}"` : "";
-    segHalos[segOf(hl.c)] += `<circle${cls} cx="${hl.x}" cy="${(+hl.y + 7.5).toFixed(1)}" r="${pal[hl.h][hl.l].halo.r}" fill="url(#g${hl.h}${hl.l})"/>`;
+  let bulbs = "";
+  litList.forEach((b, k) => {
+    const cls = twinkle?.has(k) ? ` class="t${mix(b.c * 7 + b.r) % 9}"` : "";
+    bulbs += `<use${cls} href="#b${b.h}${b.l}" x="${b.x}" y="${b.y}"/>`;
+    if (b.l >= 2) segHalos[segOf(b.c)] += `<circle${cls} cx="${b.x}" cy="${(+b.y + 7.5).toFixed(1)}" r="${pal[b.h][b.l].halo.r}" fill="url(#g${b.h}${b.l})"/>`;
   });
   const halos = segHalos.map((s, k) => (s ? (motion ? `<g class="s${k}">${s}</g>` : s) : "")).join("");
   const hookDots = hooks.flatMap((k) => [0, 1, 2, 3, 4, 5, 6].map((r) => `<circle cx="${hookX(k)}" cy="${Y0 + r * PY}" r="1.3"/>`)).join("");
-  // twinkle: 3 durations x 3 phase offsets, opacity only, >=4.2s period (0.24 Hz, far under WCAG 2.3.1). Sweep: 1.2s total.
-  const dur = [4.2, 5.6, 7.0], ph = [0, -1.6, -3.1];
+  // twinkle: 9 phase classes = 3 periods (2.4 / 3.3 / 4.2s, at most 0.42 Hz, far under WCAG 2.3.1's 3 flashes/s) x 3
+  // evenly spread negative delays. Opacity only, smooth ramps (never a hard on/off), and a dip rather than a full-cycle
+  // pulse, so the string reads full-bright while a scattered third of the bulbs dim at any moment.
+  // `.tN` sets the animation shorthand (timing); `use[class]` / `circle[class]` set only animation-name, so the
+  // higher-specificity element rules never reset the per-class duration and delay. Sweep: 1.2s total.
+  const dur = [2.4, 3.3, 4.2];
   const css = motion
-    ? `@keyframes tw{0%,100%{opacity:1}50%{opacity:.35}}@keyframes on{from{opacity:0}}circle[class]{animation:tw ease-in-out infinite}`
-      + [...Array(9)].map((_, i) => `.t${i}{animation-duration:${dur[i % 3]}s;animation-delay:${(ph[Math.floor(i / 3)] - (i % 3) * 0.7).toFixed(1)}s}`).join("")
-      + `g[class]{animation:on .5s ease-out backwards}`
-      + hooks.slice(0, -1).map((hk, k) => `.s${k}{animation-delay:${((1.2 * hk) / weeks).toFixed(2)}s}`).join("")
+    ? `@keyframes tb{0%,30%,100%{opacity:1}65%{opacity:.45}}@keyframes th{0%,30%,100%{opacity:1}65%{opacity:.1}}@keyframes on{from{opacity:0}}`
+      + [...Array(9)].map((_, i) => `.t${i}{animation:${dur[i % 3]}s ease-in-out ${(-(dur[i % 3] * ((i * 4) % 9)) / 9).toFixed(2)}s infinite}`).join("")
+      + `use[class]{animation-name:tb}circle[class]{animation-name:th}g[class]{animation:on .5s ease-out backwards}`
+      + hooks.slice(0, -1).map((hk, k) => `g.s${k}{animation-delay:${((1.2 * hk) / weeks).toFixed(2)}s}`).join("")
       + `@media (prefers-reduced-motion:reduce){*{animation:none!important}}`
     : "";
   const ws = 13 / 100, tagW = WM.width * ws, tagX = W - 16 - tagW, tagY = H - 11;

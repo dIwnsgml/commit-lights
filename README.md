@@ -47,7 +47,7 @@ Image URL parameters (combine with `&`):
 
 Examples: `.../YOUR-USERNAME.svg?style=warm`, `.../YOUR-USERNAME.svg?style=candy&motion=0`. In the `<picture>` version, add the same parameters to both URLs.
 
-The twinkle is a slow fade on some of the brightest bulbs, one cycle every 4.2 seconds or slower. It never flashes.
+The twinkle is a soft dip in brightness on every lit bulb, one cycle every 2.4 to 4.2 seconds, with neighbours out of step. It never flashes.
 
 ## How it works
 
