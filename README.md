@@ -37,17 +37,27 @@ Want it to blend into the reader's GitHub theme instead? Use the theme-matched v
 </a>
 ```
 
+### Options
+
 Image URL parameters (combine with `&`):
 
 | Parameter | Values | Default | What it does |
 |---|---|---|---|
 | `style` | `classic`, `warm`, `candy` | `classic` | Bulb colours: red/orange/green/blue, warm white, or candy cane (red and white) |
 | `theme` | `night`, `dark`, `light` | `night` | `night` brings its own dark panel. `dark` and `light` are transparent, for the `<picture>` version |
-| `motion` | `0` | on | `motion=0` serves still lights: the same picture with no animation at all |
+| `twinkle` | `gentle`, `medium`, `lively` | `medium` | How much the lights twinkle (see below). Anything else means `medium` |
+| `motion` | `0` | on | `motion=0` serves still lights: the same picture with no animation at all. It wins over `twinkle` |
 
-Examples: `.../YOUR-USERNAME.svg?style=warm`, `.../YOUR-USERNAME.svg?style=candy&motion=0`. In the `<picture>` version, add the same parameters to both URLs.
+Examples: `.../YOUR-USERNAME.svg?style=warm`, `.../YOUR-USERNAME.svg?twinkle=gentle`, `.../YOUR-USERNAME.svg?style=candy&motion=0`. In the `<picture>` version, add the same parameters to both URLs.
 
-Every bulb twinkles: lit bulbs blink down and back up with a little sparkle, and dark days flicker a faint glow, one cycle every 1.2 to 2.6 seconds per bulb, with neighbours out of step. The picture as a whole never flashes (its average brightness stays flat), and nothing cycles faster than 3 times a second.
+Twinkle levels:
+
+- `medium` (the default): lit bulbs blink down and back up with a little sparkle, and about one in three dark days glows faintly. One cycle every 2.2 to 3.8 seconds per bulb.
+- `gentle`: only lit bulbs blink, every 2.8 to 4.5 seconds. Quiet days stay dark.
+- `lively`: every bulb twinkles, dark days included, every 1.2 to 2.6 seconds.
+- Off: use `motion=0`.
+
+At every level, neighbours blink out of step, so the picture as a whole never flashes (its average brightness stays flat), and nothing cycles faster than 3 times a second. You can also pick the level on the site before you copy the snippet.
 
 ## How it works
 
@@ -110,7 +120,7 @@ const svg = buildLightsSvg(cal, { user: "YOUR-USERNAME", theme: "night", style: 
 
 - `buildLightsSvg(calendar, options) -> string` is a pure function. No DOM, no network, no fonts. It runs in Node 18+, browsers, Deno, Bun and edge runtimes.
 - A calendar is `{ start, levels, counts, total }`: `start` is a Sunday (`YYYY-MM-DD`), and `levels` has one character per day, `"0"`-`"4"` (or `"."` for padding before a partial first week). `fromCounts(start, counts)` builds one from raw counts with GitHub-style quartile levels.
-- Options: `theme`, `style`, `motion`, `user`, `label`, `footer`, `unlit`, `seed`, `from`/`to` (a week slice) and `maxTwinkle`. They're documented in JSDoc at the top of the file.
+- Options: `theme`, `style`, `motion`, `twinkle`, `user`, `label`, `footer`, `unlit`, `seed`, `from`/`to` (a week slice) and `maxTwinkle`. They're documented in JSDoc at the top of the file.
 - Also exported: `sampleCalendar(end)` (the synthetic year behind the demo image), `normalizeLogin(raw)` and `snippets(host, login, style)`.
 
 Try it:

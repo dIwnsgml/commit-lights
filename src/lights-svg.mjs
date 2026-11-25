@@ -7,11 +7,12 @@
 // Drawing notes:
 // - 53 weeks x 7 days on a fixed 16 x 19 px pitch, so it still reads as a contribution graph.
 // - One serpentine wire, hooks at month boundaries, a C9-style bulb per day. Level 0 = unlit glass.
-// - Motion: a one-time left-to-right "plug-in" sweep of the glow (1.2s), then every bulb twinkles. Lit bulbs blink from
-//   full to 15% with a quick halo sparkle as they come back on; dark bulbs flicker a faint coloured glow on and off.
-//   1.2-2.6s cycles (at most 0.83 Hz per bulb), crisp ramps, 24 balanced phase classes so neighbours are out of step and
-//   the picture as a whole never pulses. Opacity only. With CSS stripped the image is the finished, still picture.
-//   `prefers-reduced-motion: reduce` stops everything; `motion: false` drops the <style> block and the glow layer.
+// - Motion: a one-time left-to-right "plug-in" sweep of the glow (1.2s), then a twinkle at one of three levels:
+//   medium (the default): lit bulbs blink down to 35% with a quick halo sparkle and about 1 in 3 dark days glow faintly,
+//   2.2-3.8s cycles; gentle: lit bulbs only, 2.8-4.5s; lively: every bulb, 1.2-2.6s. Opacity only, at most 0.83 Hz per
+//   bulb, 24 balanced phase classes so neighbours are out of step and the picture as a whole never pulses. With CSS
+//   stripped the image is the finished, still picture. `prefers-reduced-motion: reduce` stops everything;
+//   `motion: false` drops the <style> block and the glow layer.
 // - All text uses a system font stack or outlined paths, because an SVG inside <img> can't load fonts.
 
 /**
@@ -20,6 +21,7 @@
  *   dark / light = transparent background, for GitHub's `<picture>` + `prefers-color-scheme`.
  * @typedef {"classic" | "warm" | "candy"} Style
  *   classic = red / orange / green / blue, warm = warm white, candy = candy cane (red / white).
+ * @typedef {"lively" | "medium" | "gentle"} Twinkle
  *
  * @typedef {Object} Calendar
  * @property {string} start  First day, YYYY-MM-DD. Must be a Sunday (column = week, row = weekday).
@@ -40,13 +42,31 @@
  * @property {number}  [from]          First week to draw (slice).
  * @property {number}  [to]            Week to stop before (slice).
  * @property {number}  [maxTwinkle]     Upper bound on twinkling bulbs (default: every bulb).
+ * @property {Twinkle} [twinkle="medium"] Twinkle intensity: medium (default; lit bulbs + some dark-day glows,
+ *                           2.2-3.8s), gentle (lit bulbs only, 2.8-4.5s), lively (every bulb, 1.2-2.6s).
  */
 
-export const BUILDER_VERSION = 3;
+export const BUILDER_VERSION = 4;
 /** @type {readonly Theme[]} */
 export const THEMES = ["night", "light", "dark"];
 /** @type {readonly Style[]} */
 export const STYLES = ["classic", "warm", "candy"];
+/** @type {readonly Twinkle[]} */
+export const TWINKLES = ["lively", "medium", "gentle"];
+/** @typedef {Twinkle | "off"} TwinkleSetting  An intensity, or "off" (= motion=0, a still image). */
+/** @type {readonly TwinkleSetting[]} */
+export const TWINKLE_SETTINGS = ["gentle", "medium", "lively", "off"];
+/**
+ * Image-URL params for a style + twinkle setting, in a fixed order; the defaults (classic, medium) add nothing.
+ * @param {Style} [style="classic"] @param {TwinkleSetting} [tw="medium"] @returns {string[]}
+ */
+export function lightsParams(style = "classic", tw = "medium") {
+  const p = [];
+  if (style !== "classic") p.push(`style=${style}`);
+  if (tw === "off") p.push("motion=0");
+  else if (tw !== "medium") p.push(`twinkle=${tw}`);
+  return p;
+}
 
 // ---------- colour: OKLCH -> sRGB hex, chroma reduced until it fits the gamut ----------
 function toRgb(L, C, h) {
@@ -119,6 +139,25 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 const BODY = "M-2.3 2.6C-4.7 3.9-4.6 8.4-1.7 11.8Q0 13.6 1.7 11.8C4.6 8.4 4.7 3.9 2.3 2.6Z"; // C9 teardrop, origin = wire point
 const FONT = `font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif"`;
 const PX = 16, PY = 19, X0 = 20, Y0 = 30, NT = 24; // NT = twinkle phase classes (6 periods x 4 phases)
+/** Twinkle intensities Every curve is symmetric
+ *  (on / ramp / off / ramp with equal on+off and equal ramps), so anti-phase class pairs sum to a constant and the
+ *  whole-image brightness stays flat. dur = the 6 periods (s); tb = lit glass, th = halo (with the sparkle),
+ *  tf = glow overlay; glow = which dark bulbs get one (1 = all, k = 1 in k by position hash, 0 = none); lit1 = level-1
+ *  bulbs (no halo of their own) get one too, in phase with their glass, so they glow as they blink. */
+const TW = {
+  lively: { dur: [1.2, 1.45, 1.7, 1.95, 2.25, 2.6], glow: 1, lit1: false,
+    tb: "0%,40%{opacity:1}50%,90%{opacity:.15}100%{opacity:1}",
+    th: "0%{opacity:.6}4%{opacity:1}10%,40%{opacity:.6}50%,90%{opacity:0}100%{opacity:.6}",
+    tf: "0%,40%{opacity:1}50%,90%{opacity:0}100%{opacity:1}" },
+  medium: { dur: [2.2, 2.5, 2.8, 3.1, 3.45, 3.8], glow: 3, lit1: true,
+    tb: "0%,30%{opacity:1}50%,80%{opacity:.35}100%{opacity:1}",
+    th: "0%{opacity:.6}5%{opacity:1}12%,30%{opacity:.6}50%,80%{opacity:.1}100%{opacity:.6}",
+    tf: "0%,30%{opacity:1}50%,80%{opacity:0}100%{opacity:1}" },
+  gentle: { dur: [2.8, 3, 3.25, 3.55, 3.95, 4.5], glow: 0, lit1: true,
+    tb: "0%,25%{opacity:1}50%,75%{opacity:.27}100%{opacity:1}",
+    th: "0%{opacity:.6}6%{opacity:1}14%,25%{opacity:.6}50%,75%{opacity:.05}100%{opacity:.6}",
+    tf: "0%,25%{opacity:1}50%,75%{opacity:0}100%{opacity:1}" },
+};
 /** Intrinsic size in px for a given number of weeks (53 weeks with footer = 888 x 196). */
 export const svgSize = (weeks = 53, footer = true) => ({ w: X0 * 2 + weeks * PX, h: footer ? 196 : 172 });
 
@@ -193,11 +232,14 @@ export function buildLightsSvg(cal, o = {}) {
   // blink full -> .15 with a sparkle of their halo; dark bulbs (level 0) get a faint-glow overlay that flickers 0 -> on.
   // maxTwinkle (default: all) bounds the animated subset deterministically, chosen by hash(seed, position).
   // A bulb, its halo and its glow overlay share one phase class t0-t9.
-  const maxTw = o.maxTwinkle ?? litList.length;
+  const tw3 = TW[o.twinkle ?? "medium"] ?? TW.medium;
+  // candidates: every lit bulb + the dark bulbs this intensity gives a glow
+  const cand = litList.flatMap((b, k) => (b.l >= 1 || (tw3.glow && mix(b.c * 7 + b.r + 977) % tw3.glow === 0) ? [k] : []));
+  const maxTw = o.maxTwinkle ?? cand.length;
   const seed = fnv(o.seed ?? `${o.user ?? ""}|${addDays(cal.start, Math.max(0, nDays - 1))}`);
   let twinkle = null;
   if (motion) {
-    const all = litList.map((_, k) => k);
+    const all = cand;
     if (all.length > maxTw) {
       const key = (k) => mix(seed ^ (litList[k].c * 7 + litList[k].r));
       twinkle = new Set(all.sort((a, b) => key(a) - key(b) || a - b).slice(0, Math.max(0, maxTw)));
@@ -215,12 +257,14 @@ export function buildLightsSvg(cal, o = {}) {
   }
   let bulbs = "";
   litList.forEach((b, k) => {
-    const tw = twinkle?.has(k), cls = tw ? ` class="t${phase.get(k)}"` : "";
+    const tw = twinkle?.has(k), cls = tw ? ` class="t${phase.get(k).toString(36)}"` : ""; // t0-t9, ta-tn: 1 char saves ~0.5 KB
     // dark glass stays put (its overlay does the flicker); lit glass blinks
     bulbs += `<use${b.l ? cls : ""} href="#b${b.h}${b.l}" x="${b.x}" y="${b.y}"/>`;
     if (b.l >= 2) segHalos[segOf(b.c)] += `<circle${cls} cx="${b.x}" cy="${(+b.y + 7.5).toFixed(1)}" r="${pal[b.h][b.l].halo.r}" fill="url(#g${b.h}${b.l})"/>`;
-    // the glow overlay is invisible without CSS (opacity="0"), so no-CSS renderers still show the finished picture
-    else if (tw && b.l === 0) segGlows[segOf(b.c)] += `<use${cls} href="#f${b.h}" x="${b.x}" y="${b.y}" opacity="0"/>`;
+    // glow overlays live in <g class="F" opacity="0">: invisible without CSS, so no-CSS renderers still show the finished
+    // picture. CSS shows the layer (.F{opacity:1}) but parks each glow at 0 (.F use{opacity:0}) until its animation runs,
+    // so reduced motion (animation:none) is the finished picture too. One attribute instead of one per glow (~4 KB).
+    else if (tw && (b.l === 0 || tw3.lit1)) segGlows[segOf(b.c)] += `<use${cls} href="#f${b.h}" x="${b.x}" y="${b.y}"/>`;
   });
   const grp = (segs) => segs.map((s, k) => (s ? (motion ? `<g class="s${k}">${s}</g>` : s) : "")).join("");
   const halos = grp(segHalos), glows = grp(segGlows);
@@ -236,13 +280,11 @@ export function buildLightsSvg(cal, o = {}) {
   // Specificity: `.tN` (0,1,0) sets the shorthand (timing); the layer rules `.B use[class]` / `.H circle[class]` / `.F use`
   // set only animation-name, so neither overrides the other. (v1 bug: a `circle[class]{animation:...}` shorthand reset
   // the .tN duration to 0s = no twinkle.) Sweep: `.H>g`/`.F>g` (0,1,1) shorthand, `.H>g.sN` (0,2,1) delay only. 1.2s.
-  const dur = [1.2, 1.45, 1.7, 1.95, 2.25, 2.6];
+  const dur = tw3.dur;
   const css = motion
-    ? `@keyframes tb{0%,40%{opacity:1}50%,90%{opacity:.15}100%{opacity:1}}`
-      + `@keyframes th{0%{opacity:.6}4%{opacity:1}10%,40%{opacity:.6}50%,90%{opacity:0}100%{opacity:.6}}`
-      + `@keyframes tf{0%,40%{opacity:1}50%,90%{opacity:0}100%{opacity:1}}@keyframes on{from{opacity:0}}`
-      + [...Array(NT)].map((_, i) => `.t${i}{animation:${dur[i % 6]}s linear ${(-dur[i % 6] * ([0, 0.5, 0.25, 0.75][Math.floor(i / 6)] + (i % 6) / 24)).toFixed(2)}s infinite}`).join("")
-      + `.B use[class]{animation-name:tb}.H circle[class]{animation-name:th}.F use{animation-name:tf}.H>g,.F>g{animation:on .5s ease-out backwards}`
+    ? `@keyframes tb{${tw3.tb}}@keyframes th{${tw3.th}}@keyframes tf{${tw3.tf}}@keyframes on{from{opacity:0}}`
+      + [...Array(NT)].map((_, i) => `.t${i.toString(36)}{animation:${dur[i % 6]}s linear ${(-dur[i % 6] * ([0, 0.5, 0.25, 0.75][Math.floor(i / 6)] + (i % 6) / 24)).toFixed(2)}s infinite}`).join("")
+      + `.B use[class]{animation-name:tb}.H circle[class]{animation-name:th}.F use{animation-name:tf}.F{opacity:1}.F use{opacity:0}.H>g,.F>g{animation:on .5s ease-out backwards}`
       + hooks.slice(0, -1).map((hk, k) => `.H>g.s${k},.F>g.s${k}{animation-delay:${((1.2 * hk) / weeks).toFixed(2)}s}`).join("")
       + `@media (prefers-reduced-motion:reduce){*{animation:none!important}}`
     : "";
@@ -257,7 +299,7 @@ export function buildLightsSvg(cal, o = {}) {
     + `<g ${FONT} font-size="10" fill="${C.text}">${labels.map(([c, m]) => `<text x="${hookX(c) + 2}" y="14">${m}</text>`).join("")}</g>`
     + `<path d="${wire}" fill="none" stroke="${C.wire}" stroke-width="1.4" stroke-linecap="round"/>`
     + `<rect x="${plugX}" y="${plugY - 3}" width="7" height="6" rx="1.5" fill="${C.cap}"/><path d="M${plugX + 7} ${plugY - 1.6}h3M${plugX + 7} ${plugY + 1.6}h3" stroke="${C.cap}" stroke-width="1.1"/>`
-    + `<g fill="${C.hook}">${hookDots}</g>` + (motion ? `<g class="H">${halos}</g><g class="B">${bulbs}</g>${glows ? `<g class="F">${glows}</g>` : ""}` : `<g>${halos}</g><g>${bulbs}</g>`)
+    + `<g fill="${C.hook}">${hookDots}</g>` + (motion ? `<g class="H">${halos}</g><g class="B">${bulbs}</g>${glows ? `<g class="F" opacity="0">${glows}</g>` : ""}` : `<g>${halos}</g><g>${bulbs}</g>`)
     + (footer ? `<text ${FONT} font-size="11" x="${X0}" y="${H - 12}" fill="${C.text}">${foot}</text>`
       + `<path d="${WM.d}" transform="translate(${tagX.toFixed(1)} ${tagY}) scale(${ws})" fill="${C.tag}"/>${dots}` : "")
     + `</svg>`;
@@ -320,11 +362,13 @@ export function normalizeLogin(raw) {
  * @param {string} host e.g. "commitlights.e5d.workers.dev"
  * @param {string} login a normalised login
  * @param {Style} [style="classic"]
+ * @param {TwinkleSetting} [tw="medium"]
  */
-export function snippets(host, login, style = "classic") {
+export function snippets(host, login, style = "classic", tw = "medium") {
   const base = `https://${host}`;
-  const st = style === "classic" ? "" : `?style=${style}`;
-  const pic = (theme) => `${base}/api/lights/${login}.svg?theme=${theme}${style === "classic" ? "" : `&style=${style}`}`;
+  const ps = lightsParams(style, tw);
+  const st = ps.length ? `?${ps.join("&")}` : "";
+  const pic = (theme) => `${base}/api/lights/${login}.svg?${[`theme=${theme}`, ...ps].join("&")}`;
   const link = `${base}/?u=${login}&utm_source=readme&utm_medium=embed&utm_campaign=s1`;
   const alt = `@${login}'s contributions as Christmas lights`;
   return {
