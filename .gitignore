@@ -1,0 +1,9 @@
+# example output (node examples/render.mjs)
+examples/out/
+
+node_modules/
+*.log
+.DS_Store
+.env
+.env.*
+.dev.vars
