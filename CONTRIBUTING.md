@@ -9,7 +9,7 @@ Thanks for looking. This is a small, seasonal project, so the bar is "small and 
 
 **Please keep in mind:**
 - The builder stays a single, dependency-free ES module: no build step, no DOM, no network calls.
-- The output should stay small (under 80 KB for a full year) and calm: opacity-only twinkle, nothing faster than a 2.4-second cycle, no hard on/off flashes, neighbours out of phase, and a still frame that's the finished picture.
+- The output should stay small (under 60 KB for a full year) and safe: opacity-only twinkle, no element faster than a 1.2-second cycle (well under 3 flashes a second), neighbours out of phase, whole-image brightness flat from frame to frame (no full-picture flash), reduced motion fully still, and a still frame that's the finished picture.
 - Run `node examples/render.mjs` and open a couple of the SVGs before you send a PR.
 - Open an issue first for anything bigger than a small fix, so we can agree on it before you spend the time.
 

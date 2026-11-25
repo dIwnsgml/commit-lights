@@ -1,6 +1,6 @@
 # Commit Lights
 
-Your contribution graph, strung up as Christmas lights. Busiest days glow brightest, quiet weeks stay dark, and the whole string twinkles slowly in your profile README all December.
+Your contribution graph, strung up as Christmas lights. Busiest days glow brightest, quiet days flicker faintly, and the whole string twinkles in your profile README all December.
 
 [![A year of contributions as a string of twinkling Christmas lights](https://commitlights.e5d.workers.dev/api/lights/_sample.svg)](https://commitlights.e5d.workers.dev/?utm_source=github&utm_medium=ours&utm_campaign=repo)
 
@@ -47,7 +47,7 @@ Image URL parameters (combine with `&`):
 
 Examples: `.../YOUR-USERNAME.svg?style=warm`, `.../YOUR-USERNAME.svg?style=candy&motion=0`. In the `<picture>` version, add the same parameters to both URLs.
 
-The twinkle is a soft dip in brightness on every lit bulb, one cycle every 2.4 to 4.2 seconds, with neighbours out of step. It never flashes.
+Every bulb twinkles: lit bulbs blink down and back up with a little sparkle, and dark days flicker a faint glow, one cycle every 1.2 to 2.6 seconds per bulb, with neighbours out of step. The picture as a whole never flashes (its average brightness stays flat), and nothing cycles faster than 3 times a second.
 
 ## How it works
 

@@ -7,10 +7,11 @@
 // Drawing notes:
 // - 53 weeks x 7 days on a fixed 16 x 19 px pitch, so it still reads as a contribution graph.
 // - One serpentine wire, hooks at month boundaries, a C9-style bulb per day. Level 0 = unlit glass.
-// - Motion: a one-time left-to-right "plug-in" sweep of the glow (1.2s), then every lit bulb twinkles: the glass dips
-//   to 45% opacity and its halo to 10%, on 2.4-4.2s cycles with staggered phases so neighbours sparkle out of step.
-//   Opacity only, at most 0.42 Hz per bulb. With CSS stripped the image is the finished, full-bright picture.
-//   `prefers-reduced-motion: reduce` stops everything; `motion: false` drops the <style> block entirely.
+// - Motion: a one-time left-to-right "plug-in" sweep of the glow (1.2s), then every bulb twinkles. Lit bulbs blink from
+//   full to 15% with a quick halo sparkle as they come back on; dark bulbs flicker a faint coloured glow on and off.
+//   1.2-2.6s cycles (at most 0.83 Hz per bulb), crisp ramps, 24 balanced phase classes so neighbours are out of step and
+//   the picture as a whole never pulses. Opacity only. With CSS stripped the image is the finished, still picture.
+//   `prefers-reduced-motion: reduce` stops everything; `motion: false` drops the <style> block and the glow layer.
 // - All text uses a system font stack or outlined paths, because an SVG inside <img> can't load fonts.
 
 /**
@@ -38,10 +39,10 @@
  * @property {string}  [seed]          Twinkle-subset seed (default: user + last date).
  * @property {number}  [from]          First week to draw (slice).
  * @property {number}  [to]            Week to stop before (slice).
- * @property {number}  [maxTwinkle]     Upper bound on twinkling bulbs (default: every lit bulb).
+ * @property {number}  [maxTwinkle]     Upper bound on twinkling bulbs (default: every bulb).
  */
 
-export const BUILDER_VERSION = 2;
+export const BUILDER_VERSION = 3;
 /** @type {readonly Theme[]} */
 export const THEMES = ["night", "light", "dark"];
 /** @type {readonly Style[]} */
@@ -117,7 +118,7 @@ const mix = (n) => { n = (n ^ 61) ^ (n >>> 16); n = n + (n << 3); n = n ^ (n >>>
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const BODY = "M-2.3 2.6C-4.7 3.9-4.6 8.4-1.7 11.8Q0 13.6 1.7 11.8C4.6 8.4 4.7 3.9 2.3 2.6Z"; // C9 teardrop, origin = wire point
 const FONT = `font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif"`;
-const PX = 16, PY = 19, X0 = 20, Y0 = 30;
+const PX = 16, PY = 19, X0 = 20, Y0 = 30, NT = 24; // NT = twinkle phase classes (6 periods x 4 phases)
 /** Intrinsic size in px for a given number of weeks (53 weeks with footer = 888 x 196). */
 export const svgSize = (weeks = 53, footer = true) => ({ w: X0 * 2 + weeks * PX, h: footer ? 196 : 172 });
 
@@ -179,6 +180,7 @@ export function buildLightsSvg(cal, o = {}) {
   }));
   // bulbs + halos. Halos are grouped per month segment so the plug-in sweep animates a <g> (cheap, few rules).
   const segHalos = hooks.slice(0, -1).map(() => "");
+  const segGlows = hooks.slice(0, -1).map(() => "");
   const litList = [];
   for (let c = 0; c < weeks; c++) for (let r = 0; r < 7; r++) {
     const i = (w0 + c) * 7 + r;
@@ -187,37 +189,61 @@ export function buildLightsSvg(cal, o = {}) {
     const x = xOf(c), y = (Y0 + r * PY + sagAt(x)).toFixed(1), h = (c + 2 * r) % pal.length, l = o.unlit ? 0 : lv(cal.levels, i);
     litList.push({ c, r, x, y, h, l });
   }
-  // deterministic twinkle subset over lit bulbs (level >= 1): at most maxTwinkle (default: all), chosen by hash(seed, position).
-  // A twinkling bulb and its halo share one phase class t0-t8, so the glow dips with the glass.
-  const lit = litList.flatMap((b, k) => (b.l >= 1 ? [k] : []));
-  const maxTw = o.maxTwinkle ?? lit.length;
+  // v3 twinkle: EVERY bulb takes part (v2's lit-only dip read as still on a phone). Lit bulbs (level >=1)
+  // blink full -> .15 with a sparkle of their halo; dark bulbs (level 0) get a faint-glow overlay that flickers 0 -> on.
+  // maxTwinkle (default: all) bounds the animated subset deterministically, chosen by hash(seed, position).
+  // A bulb, its halo and its glow overlay share one phase class t0-t9.
+  const maxTw = o.maxTwinkle ?? litList.length;
   const seed = fnv(o.seed ?? `${o.user ?? ""}|${addDays(cal.start, Math.max(0, nDays - 1))}`);
   let twinkle = null;
   if (motion) {
-    if (lit.length > maxTw) {
+    const all = litList.map((_, k) => k);
+    if (all.length > maxTw) {
       const key = (k) => mix(seed ^ (litList[k].c * 7 + litList[k].r));
-      twinkle = new Set([...lit].sort((a, b) => key(a) - key(b) || a - b).slice(0, Math.max(0, maxTw)));
-    } else twinkle = new Set(lit);
+      twinkle = new Set(all.sort((a, b) => key(a) - key(b) || a - b).slice(0, Math.max(0, maxTw)));
+    } else twinkle = new Set(all);
+  }
+  // Balanced phase classes: within each level, bulbs are ranked by a position hash and dealt round-robin into the 24
+  // classes, so every class (and its anti-phase partner) holds the same mix of bright and dark bulbs (+-1). Paired with
+  // the symmetric keyframes below this keeps the whole-image brightness flat while each bulb blinks.
+  // deal order: each period's 4 phases (0, .5, .25, .75 of a cycle) in turn, so small groups fill anti-phase pairs first
+  const DEAL = [...Array(NT)].map((_, n) => (n % 4) * 6 + Math.floor(n / 4));
+  const phase = new Map();
+  for (let l = 0; l <= 4; l++) {
+    const grp = litList.flatMap((b, k) => (b.l === l && twinkle?.has(k) ? [k] : []));
+    grp.sort((a, b) => mix(litList[a].c * 7 + litList[a].r) - mix(litList[b].c * 7 + litList[b].r) || a - b).forEach((k, n) => phase.set(k, DEAL[(n + 4 * l) % NT]));
   }
   let bulbs = "";
   litList.forEach((b, k) => {
-    const cls = twinkle?.has(k) ? ` class="t${mix(b.c * 7 + b.r) % 9}"` : "";
-    bulbs += `<use${cls} href="#b${b.h}${b.l}" x="${b.x}" y="${b.y}"/>`;
+    const tw = twinkle?.has(k), cls = tw ? ` class="t${phase.get(k)}"` : "";
+    // dark glass stays put (its overlay does the flicker); lit glass blinks
+    bulbs += `<use${b.l ? cls : ""} href="#b${b.h}${b.l}" x="${b.x}" y="${b.y}"/>`;
     if (b.l >= 2) segHalos[segOf(b.c)] += `<circle${cls} cx="${b.x}" cy="${(+b.y + 7.5).toFixed(1)}" r="${pal[b.h][b.l].halo.r}" fill="url(#g${b.h}${b.l})"/>`;
+    // the glow overlay is invisible without CSS (opacity="0"), so no-CSS renderers still show the finished picture
+    else if (tw && b.l === 0) segGlows[segOf(b.c)] += `<use${cls} href="#f${b.h}" x="${b.x}" y="${b.y}" opacity="0"/>`;
   });
-  const halos = segHalos.map((s, k) => (s ? (motion ? `<g class="s${k}">${s}</g>` : s) : "")).join("");
+  const grp = (segs) => segs.map((s, k) => (s ? (motion ? `<g class="s${k}">${s}</g>` : s) : "")).join("");
+  const halos = grp(segHalos), glows = grp(segGlows);
+  // glow overlay for dark bulbs: a flat, faint halo (q) + the glass tinted toward its level-1 colour
+  if (glows) defs += pal.map((lvls, h) => `<radialGradient id="q${h}"><stop offset="0" stop-color="${lvls[3].halo.c}" stop-opacity=".45"/><stop offset=".6" stop-color="${lvls[3].halo.c}" stop-opacity=".32"/><stop offset="1" stop-color="${lvls[3].halo.c}" stop-opacity="0"/></radialGradient><g id="f${h}"><circle cy="7.5" r="10.5" fill="url(#q${h})"/><use href="#p" fill="${lvls[1].body}" opacity=".65"/></g>`).join("");
   const hookDots = hooks.flatMap((k) => [0, 1, 2, 3, 4, 5, 6].map((r) => `<circle cx="${hookX(k)}" cy="${Y0 + r * PY}" r="1.3"/>`)).join("");
-  // twinkle: 9 phase classes = 3 periods (2.4 / 3.3 / 4.2s, at most 0.42 Hz, far under WCAG 2.3.1's 3 flashes/s) x 3
-  // evenly spread negative delays. Opacity only, smooth ramps (never a hard on/off), and a dip rather than a full-cycle
-  // pulse, so the string reads full-bright while a scattered third of the bulbs dim at any moment.
-  // `.tN` sets the animation shorthand (timing); `use[class]` / `circle[class]` set only animation-name, so the
-  // higher-specificity element rules never reset the per-class duration and delay. Sweep: 1.2s total.
-  const dur = [2.4, 3.3, 4.2];
+  // twinkle timing: 24 phase classes = 6 periods (1.2-2.6s, <=0.83 Hz per element; even counting the halo sparkle as a
+  // second flash that is <=1.7 flashes/s, under WCAG 2.3.1's 3/s) x 4 phases (0, 1/2, 1/4, 3/4 of a cycle). Linear timing
+  // over plateau keyframes = crisp 0.12-0.26s ramps (a blink, not a breath). Each bulb is on 40% / off 40% / ramping 20%
+  // of its cycle, and the curve is symmetric, so a class plus its anti-phase partner sum to a constant: with balanced
+  // classes (above) the whole-image mean brightness stays flat (no full-image pulse) while ~1/5-1/4 of the bulbs are
+  // mid-change at any moment, scattered.
+  // Specificity: `.tN` (0,1,0) sets the shorthand (timing); the layer rules `.B use[class]` / `.H circle[class]` / `.F use`
+  // set only animation-name, so neither overrides the other. (v1 bug: a `circle[class]{animation:...}` shorthand reset
+  // the .tN duration to 0s = no twinkle.) Sweep: `.H>g`/`.F>g` (0,1,1) shorthand, `.H>g.sN` (0,2,1) delay only. 1.2s.
+  const dur = [1.2, 1.45, 1.7, 1.95, 2.25, 2.6];
   const css = motion
-    ? `@keyframes tb{0%,30%,100%{opacity:1}65%{opacity:.45}}@keyframes th{0%,30%,100%{opacity:1}65%{opacity:.1}}@keyframes on{from{opacity:0}}`
-      + [...Array(9)].map((_, i) => `.t${i}{animation:${dur[i % 3]}s ease-in-out ${(-(dur[i % 3] * ((i * 4) % 9)) / 9).toFixed(2)}s infinite}`).join("")
-      + `use[class]{animation-name:tb}circle[class]{animation-name:th}g[class]{animation:on .5s ease-out backwards}`
-      + hooks.slice(0, -1).map((hk, k) => `g.s${k}{animation-delay:${((1.2 * hk) / weeks).toFixed(2)}s}`).join("")
+    ? `@keyframes tb{0%,40%{opacity:1}50%,90%{opacity:.15}100%{opacity:1}}`
+      + `@keyframes th{0%{opacity:.6}4%{opacity:1}10%,40%{opacity:.6}50%,90%{opacity:0}100%{opacity:.6}}`
+      + `@keyframes tf{0%,40%{opacity:1}50%,90%{opacity:0}100%{opacity:1}}@keyframes on{from{opacity:0}}`
+      + [...Array(NT)].map((_, i) => `.t${i}{animation:${dur[i % 6]}s linear ${(-dur[i % 6] * ([0, 0.5, 0.25, 0.75][Math.floor(i / 6)] + (i % 6) / 24)).toFixed(2)}s infinite}`).join("")
+      + `.B use[class]{animation-name:tb}.H circle[class]{animation-name:th}.F use{animation-name:tf}.H>g,.F>g{animation:on .5s ease-out backwards}`
+      + hooks.slice(0, -1).map((hk, k) => `.H>g.s${k},.F>g.s${k}{animation-delay:${((1.2 * hk) / weeks).toFixed(2)}s}`).join("")
       + `@media (prefers-reduced-motion:reduce){*{animation:none!important}}`
     : "";
   const ws = 13 / 100, tagW = WM.width * ws, tagX = W - 16 - tagW, tagY = H - 11;
@@ -231,7 +257,7 @@ export function buildLightsSvg(cal, o = {}) {
     + `<g ${FONT} font-size="10" fill="${C.text}">${labels.map(([c, m]) => `<text x="${hookX(c) + 2}" y="14">${m}</text>`).join("")}</g>`
     + `<path d="${wire}" fill="none" stroke="${C.wire}" stroke-width="1.4" stroke-linecap="round"/>`
     + `<rect x="${plugX}" y="${plugY - 3}" width="7" height="6" rx="1.5" fill="${C.cap}"/><path d="M${plugX + 7} ${plugY - 1.6}h3M${plugX + 7} ${plugY + 1.6}h3" stroke="${C.cap}" stroke-width="1.1"/>`
-    + `<g fill="${C.hook}">${hookDots}</g><g>${halos}</g><g>${bulbs}</g>`
+    + `<g fill="${C.hook}">${hookDots}</g>` + (motion ? `<g class="H">${halos}</g><g class="B">${bulbs}</g>${glows ? `<g class="F">${glows}</g>` : ""}` : `<g>${halos}</g><g>${bulbs}</g>`)
     + (footer ? `<text ${FONT} font-size="11" x="${X0}" y="${H - 12}" fill="${C.text}">${foot}</text>`
       + `<path d="${WM.d}" transform="translate(${tagX.toFixed(1)} ${tagY}) scale(${ws})" fill="${C.tag}"/>${dots}` : "")
     + `</svg>`;
